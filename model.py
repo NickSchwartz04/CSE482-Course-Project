@@ -44,7 +44,7 @@ def build_dataset():
 def train_model(games):
     games = games.dropna(subset=FEATURE_COLUMNS)
 
-    X = games[FEATURE_COLUMNS]
+    X = pd.get_dummies(games[["HOME_TEAM", "AWAY_TEAM"] + FEATURE_COLUMNS], dtype=int)
     y = games["TOTAL_POINTS"]
 
     X_train, X_test, y_train, y_test = train_test_split(
@@ -64,12 +64,10 @@ def train_model(games):
         "Predicted Total": predictions[:10]
     }).round(1))
 
-    # Test rows keep their original index (shuffle=False), so this pulls each
-    # test game's date to plot predictions across the season instead of just one.
     test_dates = games.loc[X_test.index, "GAME_DATE"]
     plot_predictions_over_time(test_dates, y_test, predictions)
 
-    return model
+    return model, X.columns
 
 
 def plot_predictions_over_time(dates, actual, predicted):
@@ -93,8 +91,7 @@ def resolve_team_name(history, team):
     if exact:
         return exact[0]
 
-    # Fall back to a substring match so nicknames like "Pistons" or "Magic"
-    # resolve to "Detroit Pistons" / "Orlando Magic" without needing the full name.
+    # Fall back to a substring match so nicknames like "Pistons" or "Magic" resolve to "Detroit Pistons" / "Orlando Magic" without needing the full name.
     partial = [t for t in all_teams if normalized in t.lower()]
     if len(partial) == 1:
         return partial[0]
@@ -113,27 +110,34 @@ def latest_team_averages(history, team):
     latest = matches.iloc[-1]
     return latest["AVG_POINTS"], latest["AVG_TOTAL"]
 
-def predict_total_points(model, history, home_team, away_team):
-    home_avg_points, home_avg_total = latest_team_averages(history, home_team)
-    away_avg_points, away_avg_total = latest_team_averages(history, away_team)
+def predict_total_points(model, model_columns, history, home_team, away_team):
+    resolved_home = resolve_team_name(history, home_team)
+    resolved_away = resolve_team_name(history, away_team)
 
-    features = pd.DataFrame([{
+    home_avg_points, home_avg_total = latest_team_averages(history, resolved_home)
+    away_avg_points, away_avg_total = latest_team_averages(history, resolved_away)
+
+    row = pd.DataFrame([{
+        "HOME_TEAM": resolved_home,
+        "AWAY_TEAM": resolved_away,
         "HOME_AVG_POINTS": home_avg_points,
         "AWAY_AVG_POINTS": away_avg_points,
         "HOME_AVG_TOTAL": home_avg_total,
         "AWAY_AVG_TOTAL": away_avg_total
     }])
 
-    return model.predict(features)[0]
+    row_encoded = pd.get_dummies(row, dtype=int).reindex(columns=model_columns, fill_value=0)
+
+    return model.predict(row_encoded)[0]
 
 def main():
     games, history = build_dataset()
-    model = train_model(games)
+    model, model_columns = train_model(games)
 
     home_team = input("Enter the home team name: ")
     away_team = input("Enter the away team name: ")
 
-    predicted_total = predict_total_points(model, history, home_team, away_team)
+    predicted_total = predict_total_points(model, model_columns, history, home_team, away_team)
     print(f"\nPredicted total points for {home_team} vs {away_team}: {round(predicted_total, 1)}")
 
 
